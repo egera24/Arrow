@@ -6,9 +6,9 @@
 |---|---|
 | **Workspace** | `C:\Python Projects\Arrow` |
 | **Purpose** | Interview demo for a Data & Automation Engineer role |
-| **Stack** | FastAPI, Pydantic v2, Google Gemini (`google-genai` SDK), pytest |
-| **Git** | Local repo on `main`; push to GitHub for Render deploy |
-| **Cloud** | Render free tier via `Dockerfile` — set `RENDER_URL` below after first deploy |
+| **Stack** | FastAPI, Pydantic v2, Google Gemini (`google-genai` SDK), pytest, Docker |
+| **Git** | Local repo on `main`; push to GitHub for Render auto-deploy |
+| **Cloud (live)** | https://arrow-2mz5.onrender.com — Swagger at `/docs`, root `/` redirects to `/docs` |
 | **Last updated** | 2026-06-01 |
 
 ---
@@ -19,13 +19,14 @@ Classifies support tickets and generates batch trend insights. Designed for live
 
 - **Gemini path** — real AI when `DEMO_MODE=false` and API key is set
 - **Mock path** — keyword heuristics when `DEMO_MODE=true`, no key, or auto-fallback triggers
-- **Model selection** — default via `.env`, per-request override via `?model=` query param
+- **Model selection** — default via `.env` / Render env vars, per-request override via `?model=` query param
+- **Supported models** — hardcoded in `app/model_selection.py` (`GET /models` does not call Google API)
 
 User-facing docs: `README.md`. Demo script and checklist are there too.
 
 ---
 
-## Quick start
+## Quick start (local)
 
 ```powershell
 cd "C:\Python Projects\Arrow"
@@ -43,18 +44,19 @@ copy .env.example .env   # first time only; add AI_API_KEY
 
 **Only one server on port 8000 locally.** Multiple uvicorn instances cause confusing provider/env behavior. Check with `netstat -ano | findstr :8000`.
 
-For cloud demos, use Render instead — see **Cloud deployment** below.
+For cloud demos, use the Render URL above — see **Cloud deployment** below.
 
 ---
 
 ## Cloud deployment (Render)
 
-Public Swagger: `https://<service-name>.onrender.com/docs` (replace after deploy; root `/` redirects to `/docs`).
+**Live URL:** https://arrow-2mz5.onrender.com/docs
 
 ```
 GitHub push → Render Docker build → HTTPS web service
   → env vars from Render dashboard (no .env file in container)
-  → GET /health for Render health checks
+  → GET /health/live for Render platform health checks (no Gemini call)
+  → GET /health for full provider ping (demo / diagnostics)
 ```
 
 ### Deploy steps
@@ -62,14 +64,16 @@ GitHub push → Render Docker build → HTTPS web service
 1. Push repo to GitHub
 2. Render → New Web Service → connect repo → Docker runtime, free plan
 3. Set env vars: `AI_API_KEY` (secret), `AI_MODEL`, `DEMO_MODE`, `AUTO_FALLBACK_TO_MOCK`, `BATCH_SIZE_LIMIT`
-4. Optional: deploy via [`render.yaml`](render.yaml) Blueprint
+4. Set **Health Check Path** to `/health/live` (also in [`render.yaml`](render.yaml))
+5. Optional: deploy via [`render.yaml`](render.yaml) Blueprint
 
 ### Cloud caveats
 
-- Free tier **sleeps after ~15 min idle** — cold start ~30–60s on first request
-- [`app/state.py`](app/state.py) in-memory export lost on cold start/redeploy
+- Free tier **sleeps after ~15 min idle** — cold start ~30–60s on first request; wake with `/health/live` before demo
+- [`app/state.py`](app/state.py) in-memory export lost on cold start/redeploy — run batch again before `GET /tickets/export`
 - [`app/config.py`](app/config.py) loads `.env` only if present; Render uses OS env vars
-- CI: [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs `pytest -q` on push/PR
+- Public Swagger — anyone with the URL can call endpoints and consume Gemini quota (acceptable for demo)
+- CI: [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs `pytest -q` on push/PR to `main`
 
 Local dev unchanged: `.\run.ps1` with `--reload`.
 
@@ -92,7 +96,7 @@ HTTP (Swagger / curl)
 
 | File | Role |
 |------|------|
-| `app/main.py` | Routes, exception handlers, custom OpenAPI; `GET /` → `/docs` redirect |
+| `app/main.py` | Routes, exception handlers, custom OpenAPI; `GET /` → `/docs`; `GET /health/live` for Render |
 | `app/models.py` | Pydantic schemas; `TICKET_EXAMPLE`; `created_at` hidden from OpenAPI via `SkipJsonSchema` |
 | `app/model_selection.py` | `GeminiModel` enum, `SUPPORTED_GEMINI_MODELS`, `resolve_model()` |
 | `app/config.py` | Settings from env vars + optional `.env` (`get_settings()` is `@lru_cache`) |
@@ -108,17 +112,19 @@ HTTP (Swagger / curl)
 | `.env.example` | Committed template |
 | `run.ps1` | Local dev: uvicorn from `.venv` with `--reload` |
 | `Dockerfile` | Production container; uvicorn on `$PORT` |
-| `render.yaml` | Render Blueprint (free web service) |
+| `.dockerignore` | Excludes `.venv`, `.env`, tests from image |
+| `render.yaml` | Render Blueprint (free web service, `healthCheckPath: /health/live`) |
 | `.github/workflows/ci.yml` | pytest on push/PR |
-| `tests/test_api.py` | 12 API tests (demo mode; no live Gemini) |
+| `tests/test_api.py` | 13 API tests (demo mode; no live Gemini) |
 
 ### Endpoints
 
 | Method | Path | Notes |
 |--------|------|-------|
 | GET | `/` | Redirects to `/docs` (hidden from OpenAPI) |
-| GET | `/models` | Supported Gemini models + default from env |
-| GET | `/health` | Status, provider, ping; optional `?model=` to test a specific model |
+| GET | `/models` | Supported Gemini models + default from env (hardcoded list) |
+| GET | `/health/live` | Fast liveness probe for Render; no Gemini call (hidden from OpenAPI) |
+| GET | `/health` | Status, provider, Gemini ping; optional `?model=` |
 | POST | `/tickets/classify` | Single ticket; optional `?model=` |
 | POST | `/tickets/analyze-batch` | JSON `{ "tickets": [...] }`; optional `?model=` |
 | POST | `/tickets/analyze-batch/upload` | CSV upload; optional `?model=` |
@@ -128,7 +134,7 @@ Responses include `model` (requested/effective) and `demo_mode` (true when mock 
 
 ---
 
-## Environment variables (`.env`)
+## Environment variables (`.env` / Render dashboard)
 
 ```env
 AI_PROVIDER=gemini
@@ -149,7 +155,7 @@ Free-tier Gemini quotas are **per model**. If one model returns 429, try another
 
 | How | Example |
 |-----|---------|
-| Default | `AI_MODEL=gemini-2.5-flash-lite` in `.env` |
+| Default | `AI_MODEL=gemini-2.5-flash-lite` in `.env` or Render env |
 | Per request | `POST /tickets/classify?model=gemini-2.5-flash-lite` |
 | List options | `GET /models` |
 | Test connectivity | `GET /health?model=gemini-2.0-flash-lite` |
@@ -163,6 +169,16 @@ Swagger shows `model` as a **dropdown** (enum), not free text.
 
 ## Troubleshooting
 
+### Swagger shows `TypeError: NetworkError when attempting to fetch resource`
+
+**Usually a browser-side block, not a server bug.** Confirmed on Render deploy: `curl` and direct address-bar requests to `/health` return 200; failed Swagger requests often never appear in server logs.
+
+**Most common cause:** ad blocker / privacy extension (uBlock Origin, Privacy Badger, etc.) silently cancels Swagger UI's background `fetch()`. Console may be empty.
+
+**Fix:** disable the blocker for `arrow-2mz5.onrender.com`, or use a browser/profile without extensions. For interviews, test Swagger **Execute** once before the demo.
+
+**Not the cause (ruled out during debug):** server crash, CORS misconfiguration on same-origin requests, OpenAPI `anyOf` schema (when present, server still responds to curl).
+
 ### `/health` shows `degraded` with quota message
 
 **Expected when Gemini free tier is exhausted.** `/health` pings Gemini and surfaces the specific error (e.g. `429 quota exceeded`).
@@ -170,6 +186,10 @@ Swagger shows `model` as a **dropdown** (enum), not free text.
 **Options:** switch model (see above), set `DEMO_MODE=true`, wait for quota reset, or use a new AI Studio key.
 
 Classify/batch may still return **200** via mock fallback when `AUTO_FALLBACK_TO_MOCK=true` (default).
+
+### Render cold start
+
+First request after ~15 min idle may take 30–60s. Open `/health/live` in a tab and wait for `{"status":"ok"}` before using Swagger.
 
 ### `ModuleNotFoundError: pydantic_settings`
 
@@ -195,40 +215,43 @@ Still possible for invalid JSON bodies. Validation handler adds hints for common
 .\.venv\Scripts\pytest -q
 ```
 
-12 tests in `tests/test_api.py`. Tests set `DEMO_MODE=true` and empty `AI_API_KEY` before importing the app — they never call live Gemini.
+13 tests in `tests/test_api.py`. Tests set `DEMO_MODE=true` and empty `AI_API_KEY` before importing the app — they never call live Gemini.
 
-Covers: health, model list, classify, batch, CSV upload, export, mock fallback, OpenAPI 422 hidden, model override.
+Covers: health live, health, model list, classify, batch, CSV upload, export, mock fallback, OpenAPI 422 hidden, model override.
 
 ---
 
 ## Git & what is committed
 
-Initial commit includes: `app/`, `tests/`, `data/`, `README.md`, `requirements.txt`, `.env.example`, `.gitignore`, `pytest.ini`, `run.ps1`.
+Core app: `app/`, `tests/`, `data/`, `README.md`, `requirements.txt` (pinned), `.env.example`, `.gitignore`, `pytest.ini`, `run.ps1`.
 
-Also committed for cloud: `Dockerfile`, `.dockerignore`, `render.yaml`, `.github/workflows/ci.yml`.
+Cloud/CI: `Dockerfile`, `.dockerignore`, `render.yaml`, `.github/workflows/ci.yml`.
 
 **Not committed (intentional):** `.env`, `.venv/`, `AGENT_HANDOFF.md`, `*.code-workspace`, debug logs.
 
-To publish: create GitHub repo, `git remote add origin <url>`, `git push -u origin main`, then connect Render.
+To publish updates: `git push origin main` → Render auto-rebuilds.
 
 ---
 
 ## Interview context
 
-- Live demo via Swagger at `/docs` (local or Render URL)
+- **Preferred demo URL:** https://arrow-2mz5.onrender.com/docs (no local server needed)
+- Local fallback: http://localhost:8000/docs via `.\run.ps1`
 - Batch demo file: `data/sample_tickets.csv`
 - Export path: `GET /tickets/export` → Power BI
 - Prefer `DEMO_MODE=false` for live AI portion if quota allows; fall back to mock gracefully
+- Wake Render instance with `/health/live` before live demo if service was idle
+- Disable ad blocker for Render domain before Swagger demo
 - ~5 min demo script in `README.md`
 
 ---
 
 ## Suggested next work (optional)
 
-1. Connect GitHub remote and deploy to Render
-2. Add API key auth or rate limiting for production hardening
-3. Persist batch results (DB) instead of in-memory `app/state.py`
-4. Webhook ingest endpoint for Salesforce / Zendesk-style integrations
+1. Add API key auth or rate limiting for production hardening
+2. Persist batch results (DB) instead of in-memory `app/state.py`
+3. Webhook ingest endpoint for Salesforce / Zendesk-style integrations
+4. Custom domain on Render for cleaner interview URL
 
 ---
 
@@ -240,6 +263,7 @@ To publish: create GitHub repo, `git remote add origin <url>`, `git push -u orig
 4. **Minimize scope** — match existing patterns in `app/providers/` and `app/services/`.
 5. **Run `pytest -q`** before finishing changes.
 6. **User docs** live in `README.md`; keep this file accurate for agents, not end users.
+7. **Render health checks** must use `/health/live`, not `/health` (avoids Gemini ping on every probe).
 
 ---
 
