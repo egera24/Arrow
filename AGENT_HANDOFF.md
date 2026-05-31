@@ -7,8 +7,9 @@
 | **Workspace** | `C:\Python Projects\Arrow` |
 | **Purpose** | Interview demo for a Data & Automation Engineer role |
 | **Stack** | FastAPI, Pydantic v2, Google Gemini (`google-genai` SDK), pytest |
-| **Git** | Local repo on `main`; initial commit `51c8fc1` (no remote configured yet) |
-| **Last updated** | 2026-05-31 |
+| **Git** | Local repo on `main`; push to GitHub for Render deploy |
+| **Cloud** | Render free tier via `Dockerfile` — set `RENDER_URL` below after first deploy |
+| **Last updated** | 2026-06-01 |
 
 ---
 
@@ -40,7 +41,37 @@ copy .env.example .env   # first time only; add AI_API_KEY
 .\.venv\Scripts\pytest -q
 ```
 
-**Only one server on port 8000.** Multiple uvicorn instances cause confusing provider/env behavior. Check with `netstat -ano | findstr :8000`.
+**Only one server on port 8000 locally.** Multiple uvicorn instances cause confusing provider/env behavior. Check with `netstat -ano | findstr :8000`.
+
+For cloud demos, use Render instead — see **Cloud deployment** below.
+
+---
+
+## Cloud deployment (Render)
+
+Public Swagger: `https://<service-name>.onrender.com/docs` (replace after deploy; root `/` redirects to `/docs`).
+
+```
+GitHub push → Render Docker build → HTTPS web service
+  → env vars from Render dashboard (no .env file in container)
+  → GET /health for Render health checks
+```
+
+### Deploy steps
+
+1. Push repo to GitHub
+2. Render → New Web Service → connect repo → Docker runtime, free plan
+3. Set env vars: `AI_API_KEY` (secret), `AI_MODEL`, `DEMO_MODE`, `AUTO_FALLBACK_TO_MOCK`, `BATCH_SIZE_LIMIT`
+4. Optional: deploy via [`render.yaml`](render.yaml) Blueprint
+
+### Cloud caveats
+
+- Free tier **sleeps after ~15 min idle** — cold start ~30–60s on first request
+- [`app/state.py`](app/state.py) in-memory export lost on cold start/redeploy
+- [`app/config.py`](app/config.py) loads `.env` only if present; Render uses OS env vars
+- CI: [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs `pytest -q` on push/PR
+
+Local dev unchanged: `.\run.ps1` with `--reload`.
 
 ---
 
@@ -61,10 +92,10 @@ HTTP (Swagger / curl)
 
 | File | Role |
 |------|------|
-| `app/main.py` | Routes, exception handlers, custom OpenAPI (hides 422 in Swagger docs) |
+| `app/main.py` | Routes, exception handlers, custom OpenAPI; `GET /` → `/docs` redirect |
 | `app/models.py` | Pydantic schemas; `TICKET_EXAMPLE`; `created_at` hidden from OpenAPI via `SkipJsonSchema` |
 | `app/model_selection.py` | `GeminiModel` enum, `SUPPORTED_GEMINI_MODELS`, `resolve_model()` |
-| `app/config.py` | Settings from `.env` (`get_settings()` is `@lru_cache` — restart after `.env` changes) |
+| `app/config.py` | Settings from env vars + optional `.env` (`get_settings()` is `@lru_cache`) |
 | `app/providers/factory.py` | Provider selection; accepts optional `model` override |
 | `app/providers/gemini_provider.py` | Gemini JSON-mode calls; `ping()` returns `(reachable, detail)` |
 | `app/providers/errors.py` | `ProviderUnavailableError` for 401/403/429 |
@@ -75,14 +106,18 @@ HTTP (Swagger / curl)
 | `data/sample_tickets.csv` | 20 demo tickets for batch upload demo |
 | `.env` | Secrets — **never commit** (in `.gitignore`) |
 | `.env.example` | Committed template |
-| `run.ps1` | Starts uvicorn from `.venv` with `--reload` |
+| `run.ps1` | Local dev: uvicorn from `.venv` with `--reload` |
+| `Dockerfile` | Production container; uvicorn on `$PORT` |
+| `render.yaml` | Render Blueprint (free web service) |
+| `.github/workflows/ci.yml` | pytest on push/PR |
 | `tests/test_api.py` | 12 API tests (demo mode; no live Gemini) |
 
 ### Endpoints
 
 | Method | Path | Notes |
 |--------|------|-------|
-| GET | `/models` | Supported Gemini models + default from `.env` |
+| GET | `/` | Redirects to `/docs` (hidden from OpenAPI) |
+| GET | `/models` | Supported Gemini models + default from env |
 | GET | `/health` | Status, provider, ping; optional `?model=` to test a specific model |
 | POST | `/tickets/classify` | Single ticket; optional `?model=` |
 | POST | `/tickets/analyze-batch` | JSON `{ "tickets": [...] }`; optional `?model=` |
@@ -170,15 +205,17 @@ Covers: health, model list, classify, batch, CSV upload, export, mock fallback, 
 
 Initial commit includes: `app/`, `tests/`, `data/`, `README.md`, `requirements.txt`, `.env.example`, `.gitignore`, `pytest.ini`, `run.ps1`.
 
+Also committed for cloud: `Dockerfile`, `.dockerignore`, `render.yaml`, `.github/workflows/ci.yml`.
+
 **Not committed (intentional):** `.env`, `.venv/`, `AGENT_HANDOFF.md`, `*.code-workspace`, debug logs.
 
-To publish: create GitHub repo, `git remote add origin <url>`, `git push -u origin main`.
+To publish: create GitHub repo, `git remote add origin <url>`, `git push -u origin main`, then connect Render.
 
 ---
 
 ## Interview context
 
-- Live demo via Swagger at `/docs`
+- Live demo via Swagger at `/docs` (local or Render URL)
 - Batch demo file: `data/sample_tickets.csv`
 - Export path: `GET /tickets/export` → Power BI
 - Prefer `DEMO_MODE=false` for live AI portion if quota allows; fall back to mock gracefully
@@ -188,11 +225,10 @@ To publish: create GitHub repo, `git remote add origin <url>`, `git push -u orig
 
 ## Suggested next work (optional)
 
-1. Add GitHub remote and CI (pytest on push)
-2. Pin `requirements.txt` versions for reproducible deploys
-3. Add API key auth or rate limiting for production hardening
-4. Persist batch results (DB) instead of in-memory `app/state.py`
-5. Webhook ingest endpoint for Salesforce / Zendesk-style integrations
+1. Connect GitHub remote and deploy to Render
+2. Add API key auth or rate limiting for production hardening
+3. Persist batch results (DB) instead of in-memory `app/state.py`
+4. Webhook ingest endpoint for Salesforce / Zendesk-style integrations
 
 ---
 
@@ -209,6 +245,6 @@ To publish: create GitHub repo, `git remote add origin <url>`, `git push -u orig
 
 ## Dependencies
 
-See `requirements.txt`: fastapi, uvicorn, pydantic, pydantic-settings, python-multipart, httpx, google-genai, pytest, pytest-asyncio.
+See `requirements.txt` — pinned versions for reproducible local and Render builds.
 
 Uses `google-genai` (not deprecated `google-generativeai`).

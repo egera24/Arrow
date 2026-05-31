@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: arrow-api
+    runtime: docker
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: AI_PROVIDER
+        value: gemini
+      - key: AI_API_KEY
+        sync: false
+      - key: AI_MODEL
+        value: gemini-2.0-flash-lite
+      - key: DEMO_MODE
+        value: false
+      - key: AUTO_FALLBACK_TO_MOCK
+        value: true
+      - key: BATCH_SIZE_LIMIT
+        value: 10

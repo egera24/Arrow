@@ -8,8 +8,9 @@ A Python FastAPI service that classifies support tickets and generates batch tre
 - **Batch analysis** — process a CSV or JSON array of tickets and return per-ticket classifications plus trend insights and anomaly flags
 - **CSV export** — download the last batch result for Power BI or Excel
 - **Live demo ready** — Swagger UI at `/docs` for real-time requests during interviews
+- **Cloud deployable** — Docker + [Render](https://render.com) free tier for a public HTTPS URL (no local server required)
 
-## Quick start
+## Quick start (local)
 
 ### 1. Create a virtual environment
 
@@ -79,7 +80,8 @@ AI_MODEL=gemini-2.0-flash-lite
 **Per request (Swagger query param `model` or curl):**
 
 ```powershell
-curl "http://localhost:8000/tickets/classify?model=gemini-2.5-flash-lite" `
+$BASE_URL = "http://localhost:8000"  # or https://your-service.onrender.com
+curl "$BASE_URL/tickets/classify?model=gemini-2.5-flash-lite" `
   -H "Content-Type: application/json" `
   -d "{\"ticket_id\":\"TKT-1001\",\"subject\":\"Cannot log in\",\"description\":\"Login failed.\"}"
 ```
@@ -87,6 +89,58 @@ curl "http://localhost:8000/tickets/classify?model=gemini-2.5-flash-lite" `
 List supported models: **GET `/models`**. Test connectivity for a model: **GET `/health?model=gemini-2.5-flash-lite`**.
 
 Supported IDs include: `gemini-2.0-flash-lite`, `gemini-2.0-flash`, `gemini-2.5-flash-lite`, `gemini-2.5-flash`, `gemini-1.5-flash`, `gemini-1.5-pro`.
+
+## Deploy to Render (free tier)
+
+Host the API on the internet without running a local server. Swagger stays at `/docs` on your public URL.
+
+### Prerequisites
+
+1. Push this repo to GitHub
+2. A [Render](https://render.com) account (free)
+3. A Gemini API key from [Google AI Studio](https://aistudio.google.com/apikey)
+
+### Steps
+
+1. **GitHub** — create a repo and push `main`:
+   ```powershell
+   git remote add origin https://github.com/YOUR_USER/arrow.git
+   git push -u origin main
+   ```
+2. **Render** — Dashboard → **New** → **Web Service** → connect your GitHub repo
+3. Render detects the [`Dockerfile`](Dockerfile) automatically (runtime: Docker, plan: Free)
+4. **Environment variables** — add in the Render dashboard (mirror [`.env.example`](.env.example)):
+   | Key | Value |
+   |-----|-------|
+   | `AI_API_KEY` | Your Gemini key (mark as secret) |
+   | `AI_MODEL` | `gemini-2.0-flash-lite` |
+   | `DEMO_MODE` | `false` |
+   | `AUTO_FALLBACK_TO_MOCK` | `true` |
+   | `BATCH_SIZE_LIMIT` | `10` |
+5. **Deploy** — when the build finishes, open `https://<your-service-name>.onrender.com/docs`
+
+Alternatively, use the [`render.yaml`](render.yaml) Blueprint for one-click setup from the repo.
+
+### Free-tier behavior
+
+- **Cold starts** — free services sleep after ~15 minutes idle; the first request may take 30–60 seconds
+- **In-memory export** — `GET /tickets/export` only works for the last batch in the current instance; after a cold start or redeploy, run batch analysis again before exporting
+- **Public API** — anyone with the URL can use Swagger and consume your Gemini quota; acceptable for a demo interview project
+
+### Verify deployment
+
+- `GET https://<your-service>.onrender.com/health` → `ok` or `degraded` (quota)
+- `GET https://<your-service>.onrender.com/docs` → Swagger UI over HTTPS
+- Run batch + export in the same session before the service sleeps
+
+### Local Docker smoke test (optional)
+
+```powershell
+docker build -t arrow-api .
+docker run --rm -p 8000:8000 -e DEMO_MODE=true arrow-api
+```
+
+Open http://localhost:8000/docs
 
 ## API endpoints
 
@@ -101,10 +155,20 @@ Supported IDs include: `gemini-2.0-flash-lite`, `gemini-2.0-flash`, `gemini-2.5-
 
 ## Example requests
 
+Set the base URL first:
+
+```powershell
+# Local
+$BASE_URL = "http://localhost:8000"
+
+# Render (replace with your service URL)
+# $BASE_URL = "https://your-service-name.onrender.com"
+```
+
 ### Classify one ticket
 
 ```powershell
-curl -X POST "http://localhost:8000/tickets/classify" `
+curl -X POST "$BASE_URL/tickets/classify" `
   -H "Content-Type: application/json" `
   -d "{\"ticket_id\":\"TKT-1001\",\"subject\":\"Cannot log in\",\"description\":\"User reports login failures since this morning.\"}"
 ```
@@ -112,7 +176,7 @@ curl -X POST "http://localhost:8000/tickets/classify" `
 ### Analyze batch (JSON)
 
 ```powershell
-curl -X POST "http://localhost:8000/tickets/analyze-batch" `
+curl -X POST "$BASE_URL/tickets/analyze-batch" `
   -H "Content-Type: application/json" `
   -d @batch.json
 ```
@@ -124,7 +188,7 @@ Use Swagger UI at `/docs` → **POST /tickets/analyze-batch/upload** → upload 
 Or with curl:
 
 ```powershell
-curl -X POST "http://localhost:8000/tickets/analyze-batch/upload" `
+curl -X POST "$BASE_URL/tickets/analyze-batch/upload" `
   -F "file=@data/sample_tickets.csv"
 ```
 
@@ -133,7 +197,7 @@ curl -X POST "http://localhost:8000/tickets/analyze-batch/upload" `
 After running a batch analysis:
 
 ```powershell
-curl -O -J "http://localhost:8000/tickets/export"
+curl -O -J "$BASE_URL/tickets/export"
 ```
 
 This CSV maps directly to a Power BI dataset for trend dashboards.
@@ -149,7 +213,8 @@ This CSV maps directly to a Power BI dataset for trend dashboards.
 
 ## Pre-interview checklist
 
-- [ ] Server running; `/health` returns `ok`
+- [ ] API reachable at local `/docs` or Render `/docs` URL
+- [ ] `/health` returns `ok`
 - [ ] One live classify request succeeds
 - [ ] Batch upload on `data/sample_tickets.csv` completes within ~30 seconds
 - [ ] `DEMO_MODE=false` for the live portion
@@ -161,7 +226,7 @@ This CSV maps directly to a Power BI dataset for trend dashboards.
 app/
   main.py              # FastAPI routes
   models.py            # Request/response schemas
-  config.py            # Environment settings
+  config.py            # Environment settings (optional .env; reads Render env vars)
   state.py             # Last batch result + CSV helpers
   providers/           # AI provider adapter (Gemini + mock)
   services/            # Classification and batch logic
@@ -169,6 +234,9 @@ data/
   sample_tickets.csv   # Demo dataset
 tests/
   test_api.py          # API tests (demo mode)
+Dockerfile             # Production container (Render)
+render.yaml            # Render Blueprint
+.github/workflows/ci.yml
 ```
 
 ## Run tests

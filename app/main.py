@@ -1,7 +1,7 @@
 from fastapi import Body, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.openapi.utils import get_openapi
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
 
 from app.config import Settings, get_settings
 from app.model_selection import MODEL_SELECTION_HINT, GeminiModel, SUPPORTED_GEMINI_MODELS, resolve_model
@@ -34,6 +34,11 @@ MODEL_QUERY = Query(
     default=None,
     description="Optional Gemini model override. Leave empty to use AI_MODEL from .env.",
 )
+
+
+@app.get("/", include_in_schema=False)
+async def root() -> RedirectResponse:
+    return RedirectResponse(url="/docs")
 
 
 def _resolve_model_or_400(requested: str | GeminiModel | None, settings: Settings) -> str:
