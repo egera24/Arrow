@@ -1,5 +1,4 @@
 import asyncio
-import os
 import time
 
 from fastapi import Body, FastAPI, File, HTTPException, Query, Request, UploadFile
@@ -371,8 +370,7 @@ def custom_openapi():
             if isinstance(operation, dict):
                 operation.get("responses", {}).pop("422", None)
     _fix_model_query_openapi(openapi_schema)
-    render_url = os.getenv("RENDER_EXTERNAL_URL", "").rstrip("/")
-    openapi_schema["servers"] = [{"url": render_url}] if render_url else [{"url": "/"}]
+    openapi_schema["servers"] = [{"url": "/"}]
     app.openapi_schema = openapi_schema
     return app.openapi_schema
 
