@@ -17,15 +17,6 @@ def anyio_backend():
 
 
 @pytest.mark.asyncio
-async def test_cors_allows_wildcard_origin_without_credentials():
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        response = await client.get("/health/live", headers={"Origin": "null"})
-    assert response.status_code == 200
-    assert response.headers.get("access-control-allow-origin") == "*"
-    assert response.headers.get("access-control-allow-credentials") != "true"
-
-
-@pytest.mark.asyncio
 async def test_health_live():
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.get("/health/live")
@@ -96,16 +87,6 @@ async def test_openapi_hides_422_validation_docs():
     assert "enum" in gemini_model_schema
     ticket_input = schema["components"]["schemas"]["TicketInput"]
     assert "created_at" not in ticket_input.get("properties", {})
-
-
-def test_openapi_model_query_avoids_anyof_for_swagger():
-    schema = app.openapi()
-    model_param = schema["paths"]["/health"]["get"]["parameters"][0]
-    assert model_param["name"] == "model"
-    param_schema = model_param["schema"]
-    assert "anyOf" not in param_schema
-    assert param_schema["type"] == "string"
-    assert "gemini-2.5-flash-lite" in param_schema["enum"]
 
 
 @pytest.mark.asyncio

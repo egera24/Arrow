@@ -1,15 +1,9 @@
-import asyncio
-import time
-
 from fastapi import Body, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
-from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.config import Settings, get_settings
-from app.debug_log import agent_log
 from app.model_selection import MODEL_SELECTION_HINT, GeminiModel, SUPPORTED_GEMINI_MODELS, resolve_model
 from app.models import (
     TICKET_EXAMPLE,
@@ -35,57 +29,6 @@ app = FastAPI(
     ),
     version="1.0.0",
 )
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
-    expose_headers=["X-Request-Duration-Ms"],
-)
-
-
-class RequestLogMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
-        started = time.perf_counter()
-        origin = request.headers.get("origin", "")
-        # #region agent log
-        agent_log(
-            hypothesis_id="H11",
-            location="app/main.py:RequestLogMiddleware:entry",
-            message="request received",
-            data={
-                "path": request.url.path,
-                "method": request.method,
-                "origin": origin if origin else "(none)",
-                "query": str(request.url.query)[:120],
-            },
-            run_id="post-fix",
-        )
-        # #endregion
-        response = await call_next(request)
-        elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
-        # #region agent log
-        agent_log(
-            hypothesis_id="H5",
-            location="app/main.py:RequestLogMiddleware",
-            message="request completed",
-            data={
-                "path": request.url.path,
-                "method": request.method,
-                "origin": origin if origin else "(none)",
-                "status_code": response.status_code,
-                "elapsed_ms": elapsed_ms,
-            },
-            run_id="post-fix",
-        )
-        # #endregion
-        response.headers["X-Request-Duration-Ms"] = str(elapsed_ms)
-        return response
-
-
-app.add_middleware(RequestLogMiddleware)
 
 MODEL_QUERY = Query(
     default=None,
@@ -140,41 +83,16 @@ async def list_models() -> ModelsResponse:
     )
 
 
-PING_TIMEOUT_SECONDS = 20
-
-
 @app.get("/health/live", include_in_schema=False)
 async def health_live() -> dict[str, str]:
     """Fast liveness probe for Render (no external API calls)."""
-    # #region agent log
-    agent_log(
-        hypothesis_id="H4",
-        location="app/main.py:health_live",
-        message="liveness probe",
-        data={"path": "/health/live"},
-    )
-    # #endregion
     return {"status": "ok"}
 
 
 @app.get("/health", response_model=HealthResponse)
 async def health(
-    request: Request,
     model: GeminiModel | None = MODEL_QUERY,
 ) -> HealthResponse:
-    started = time.perf_counter()
-    # #region agent log
-    agent_log(
-        hypothesis_id="H1",
-        location="app/main.py:health:entry",
-        message="health check started",
-        data={
-            "model": model.value if isinstance(model, GeminiModel) else model,
-            "client_host": request.client.host if request.client else None,
-            "user_agent": request.headers.get("user-agent", "")[:80],
-        },
-    )
-    # #endregion
     settings = get_settings()
     effective_model = _resolve_model_or_400(model, settings)
     provider = _provider_for_request(settings, effective_model)
@@ -188,52 +106,14 @@ async def health(
         message = "Running in demo mode or without API key."
     else:
         try:
-            reachable, ping_detail = await asyncio.wait_for(
-                provider.ping(),
-                timeout=PING_TIMEOUT_SECONDS,
-            )
+            reachable, ping_detail = await provider.ping()
             if not reachable:
                 status = "degraded"
                 message = ping_detail or "API key is configured but provider ping failed."
-        except asyncio.TimeoutError:
-            status = "degraded"
-            reachable = False
-            message = f"Provider ping timed out after {PING_TIMEOUT_SECONDS}s."
-            # #region agent log
-            agent_log(
-                hypothesis_id="H3",
-                location="app/main.py:health:ping_timeout",
-                message="gemini ping timed out",
-                data={"model": effective_model, "timeout_seconds": PING_TIMEOUT_SECONDS},
-            )
-            # #endregion
         except Exception as exc:
             status = "degraded"
             reachable = False
             message = f"Provider ping failed: {exc}"
-            # #region agent log
-            agent_log(
-                hypothesis_id="H2",
-                location="app/main.py:health:ping_error",
-                message="gemini ping raised",
-                data={"model": effective_model, "error_type": type(exc).__name__},
-            )
-            # #endregion
-
-    elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
-    # #region agent log
-    agent_log(
-        hypothesis_id="H1",
-        location="app/main.py:health:exit",
-        message="health check finished",
-        data={
-            "status": status,
-            "model": effective_model,
-            "provider_reachable": reachable,
-            "elapsed_ms": elapsed_ms,
-        },
-    )
-    # #endregion
 
     return HealthResponse(
         status=status,
@@ -337,25 +217,6 @@ async def tickets_export() -> PlainTextResponse:
     )
 
 
-def _fix_model_query_openapi(openapi_schema: dict) -> None:
-    """Swagger UI fails on optional enum query params generated as anyOf[enum, null]."""
-    for path_item in openapi_schema.get("paths", {}).values():
-        for operation in path_item.values():
-            if not isinstance(operation, dict):
-                continue
-            for param in operation.get("parameters", []):
-                if param.get("name") != "model" or param.get("in") != "query":
-                    continue
-                schema = param.get("schema", {})
-                if "anyOf" not in schema:
-                    continue
-                param["schema"] = {
-                    "type": "string",
-                    "enum": list(SUPPORTED_GEMINI_MODELS),
-                    "description": schema.get("description", ""),
-                }
-
-
 def custom_openapi():
     if app.openapi_schema:
         return app.openapi_schema
@@ -369,8 +230,6 @@ def custom_openapi():
         for operation in path_item.values():
             if isinstance(operation, dict):
                 operation.get("responses", {}).pop("422", None)
-    _fix_model_query_openapi(openapi_schema)
-    openapi_schema["servers"] = [{"url": "/"}]
     app.openapi_schema = openapi_schema
     return app.openapi_schema
 
