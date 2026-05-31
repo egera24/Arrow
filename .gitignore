@@ -1,0 +1,35 @@
+# Secrets and local environment
+.env
+.env.local
+.env.*.local
+
+# Virtual environments
+.venv/
+venv/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# Testing and type checking
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Debug and logs
+debug-*.log
+*.log
+
+# IDE and editor (personal)
+*.code-workspace
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,21 @@
+ticket_id,subject,description,created_at
+TKT-1001,Cannot log in to customer portal,User reports invalid password error even after reset. Started this morning for multiple users in EU region.,2026-05-28T08:12:00
+TKT-1002,Login page timeout,Portal login spins for 30+ seconds then fails with gateway timeout.,2026-05-28T08:45:00
+TKT-1003,SSO redirect loop,After Azure SSO update users are stuck in redirect loop when accessing dashboard.,2026-05-28T09:03:00
+TKT-1004,Account locked without reason,Customer says account locked after 2 failed attempts; policy should allow 5.,2026-05-28T09:20:00
+TKT-1005,Password reset email not received,Reset emails not arriving for corporate domain addresses.,2026-05-28T10:01:00
+TKT-1006,Duplicate invoice for April,Customer billed twice for subscription renewal in April statement.,2026-05-27T14:22:00
+TKT-1007,Unexpected price increase,Plan price changed without notice on latest invoice.,2026-05-27T15:10:00
+TKT-1008,Refund status request,Refund approved 10 days ago but not visible on credit card yet.,2026-05-26T11:40:00
+TKT-1009,API integration returns 500,Partner integration fails on POST /orders with internal server error since deploy.,2026-05-28T07:55:00
+TKT-1010,Webhook delivery delays,Outbound webhooks delayed by 15-20 minutes affecting order sync.,2026-05-28T11:15:00
+TKT-1011,Report export missing rows,Weekly usage export missing last 2 days of events.,2026-05-25T16:30:00
+TKT-1012,Shipment stuck in transit,Tracking shows label created but no carrier scan for 4 days.,2026-05-24T09:00:00
+TKT-1013,Wrong shipping address on order,Order shipped to old address after customer updated profile.,2026-05-23T13:18:00
+TKT-1014,How to add team members,New admin asking for steps to invite users to workspace.,2026-05-28T12:05:00
+TKT-1015,Feature request: dark mode,Customer feedback requesting dark theme in web app.,2026-05-22T10:00:00
+TKT-1016,Mobile app crash on launch,iOS app crashes immediately after splash screen on version 3.2.1.,2026-05-28T06:40:00
+TKT-1017,Data sync failed overnight,Nightly Salesforce sync job failed with authentication error.,2026-05-28T02:30:00
+TKT-1018,Billing address update,Customer needs to change billing address before next cycle.,2026-05-28T13:00:00
+TKT-1019,Login works on mobile but not desktop,Same credentials succeed on phone app but fail on Chrome desktop.,2026-05-28T13:22:00
+TKT-1020,Thank you for quick support,Customer confirms previous ticket resolved and praises support team.,2026-05-21T17:45:00
