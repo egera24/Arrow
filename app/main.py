@@ -1,4 +1,5 @@
 import asyncio
+import os
 import time
 
 from fastapi import Body, FastAPI, File, HTTPException, Query, Request, UploadFile
@@ -50,6 +51,20 @@ class RequestLogMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         started = time.perf_counter()
         origin = request.headers.get("origin", "")
+        # #region agent log
+        agent_log(
+            hypothesis_id="H11",
+            location="app/main.py:RequestLogMiddleware:entry",
+            message="request received",
+            data={
+                "path": request.url.path,
+                "method": request.method,
+                "origin": origin if origin else "(none)",
+                "query": str(request.url.query)[:120],
+            },
+            run_id="post-fix",
+        )
+        # #endregion
         response = await call_next(request)
         elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
         # #region agent log
@@ -323,6 +338,25 @@ async def tickets_export() -> PlainTextResponse:
     )
 
 
+def _fix_model_query_openapi(openapi_schema: dict) -> None:
+    """Swagger UI fails on optional enum query params generated as anyOf[enum, null]."""
+    for path_item in openapi_schema.get("paths", {}).values():
+        for operation in path_item.values():
+            if not isinstance(operation, dict):
+                continue
+            for param in operation.get("parameters", []):
+                if param.get("name") != "model" or param.get("in") != "query":
+                    continue
+                schema = param.get("schema", {})
+                if "anyOf" not in schema:
+                    continue
+                param["schema"] = {
+                    "type": "string",
+                    "enum": list(SUPPORTED_GEMINI_MODELS),
+                    "description": schema.get("description", ""),
+                }
+
+
 def custom_openapi():
     if app.openapi_schema:
         return app.openapi_schema
@@ -336,7 +370,9 @@ def custom_openapi():
         for operation in path_item.values():
             if isinstance(operation, dict):
                 operation.get("responses", {}).pop("422", None)
-    openapi_schema["servers"] = [{"url": "/"}]
+    _fix_model_query_openapi(openapi_schema)
+    render_url = os.getenv("RENDER_EXTERNAL_URL", "").rstrip("/")
+    openapi_schema["servers"] = [{"url": render_url}] if render_url else [{"url": "/"}]
     app.openapi_schema = openapi_schema
     return app.openapi_schema
 

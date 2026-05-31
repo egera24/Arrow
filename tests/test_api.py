@@ -98,6 +98,16 @@ async def test_openapi_hides_422_validation_docs():
     assert "created_at" not in ticket_input.get("properties", {})
 
 
+def test_openapi_model_query_avoids_anyof_for_swagger():
+    schema = app.openapi()
+    model_param = schema["paths"]["/health"]["get"]["parameters"][0]
+    assert model_param["name"] == "model"
+    param_schema = model_param["schema"]
+    assert "anyOf" not in param_schema
+    assert param_schema["type"] == "string"
+    assert "gemini-2.5-flash-lite" in param_schema["enum"]
+
+
 @pytest.mark.asyncio
 async def test_classify_passes_model_override_to_provider():
     with patch("app.main.get_provider") as mock_get_provider:
