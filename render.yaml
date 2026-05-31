@@ -3,7 +3,7 @@ services:
     name: arrow-api
     runtime: docker
     plan: free
-    healthCheckPath: /health
+    healthCheckPath: /health/live
     envVars:
       - key: AI_PROVIDER
         value: gemini
