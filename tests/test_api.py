@@ -17,6 +17,15 @@ def anyio_backend():
 
 
 @pytest.mark.asyncio
+async def test_cors_allows_wildcard_origin_without_credentials():
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/health/live", headers={"Origin": "null"})
+    assert response.status_code == 200
+    assert response.headers.get("access-control-allow-origin") == "*"
+    assert response.headers.get("access-control-allow-credentials") != "true"
+
+
+@pytest.mark.asyncio
 async def test_health_live():
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.get("/health/live")

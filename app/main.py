@@ -6,6 +6,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.config import Settings, get_settings
 from app.debug_log import agent_log
@@ -38,10 +39,39 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Request-Duration-Ms"],
 )
+
+
+class RequestLogMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        started = time.perf_counter()
+        origin = request.headers.get("origin", "")
+        response = await call_next(request)
+        elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
+        # #region agent log
+        agent_log(
+            hypothesis_id="H5",
+            location="app/main.py:RequestLogMiddleware",
+            message="request completed",
+            data={
+                "path": request.url.path,
+                "method": request.method,
+                "origin": origin if origin else "(none)",
+                "status_code": response.status_code,
+                "elapsed_ms": elapsed_ms,
+            },
+            run_id="post-fix",
+        )
+        # #endregion
+        response.headers["X-Request-Duration-Ms"] = str(elapsed_ms)
+        return response
+
+
+app.add_middleware(RequestLogMiddleware)
 
 MODEL_QUERY = Query(
     default=None,
@@ -306,6 +336,7 @@ def custom_openapi():
         for operation in path_item.values():
             if isinstance(operation, dict):
                 operation.get("responses", {}).pop("422", None)
+    openapi_schema["servers"] = [{"url": "/"}]
     app.openapi_schema = openapi_schema
     return app.openapi_schema
 
