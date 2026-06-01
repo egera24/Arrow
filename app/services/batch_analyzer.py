@@ -34,6 +34,7 @@ async def analyze_batch(
     *,
     limit: int,
     model: str,
+    allow_mock_fallback: bool = True,
 ) -> BatchAnalyzeResponse:
     truncated = len(tickets) > limit
     selected = tickets[:limit]
@@ -41,7 +42,11 @@ async def analyze_batch(
     classifications: list[TicketClassification] = []
     provider_used = provider.name
     for ticket in selected:
-        classification, used = await classify_ticket(provider, ticket)
+        classification, used = await classify_ticket(
+            provider,
+            ticket,
+            allow_mock_fallback=allow_mock_fallback,
+        )
         classifications.append(classification)
         if used == "mock":
             provider_used = "mock"
@@ -49,7 +54,7 @@ async def analyze_batch(
     try:
         trends = await provider.analyze_trends(classifications)
     except ProviderUnavailableError:
-        if get_settings().auto_fallback_to_mock:
+        if allow_mock_fallback and get_settings().auto_fallback_to_mock:
             trends = await MockProvider().analyze_trends(classifications)
             provider_used = "mock"
         else:

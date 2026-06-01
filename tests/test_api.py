@@ -241,6 +241,27 @@ async def test_classify_falls_back_when_gemini_unavailable():
 
 
 @pytest.mark.asyncio
+async def test_classify_no_fallback_when_demo_mode_false_explicit():
+    gemini_provider = AsyncMock()
+    gemini_provider.name = "gemini"
+    gemini_provider.classify_ticket = AsyncMock(
+        side_effect=ProviderUnavailableError("Gemini quota exceeded", status_code=503)
+    )
+    with patch("app.main.get_provider", return_value=gemini_provider):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/tickets/classify?demo_mode=false",
+                json={
+                    "ticket_id": "TKT-NO-FALLBACK",
+                    "subject": "Cannot log in",
+                    "description": "User cannot access account after password reset.",
+                },
+            )
+    assert response.status_code == 503
+    assert "quota exceeded" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
 async def test_analyze_batch_json():
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.post(

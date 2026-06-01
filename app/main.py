@@ -154,7 +154,12 @@ async def tickets_classify(
     settings = get_settings()
     effective_model = _resolve_model_or_400(model, settings)
     provider = _provider_for_request(settings, effective_model, demo_mode)
-    classification, provider_used = await classify_ticket(provider, ticket)
+    allow_mock_fallback = demo_mode is not False
+    classification, provider_used = await classify_ticket(
+        provider,
+        ticket,
+        allow_mock_fallback=allow_mock_fallback,
+    )
     return ClassifyResponse(
         ticket_id=ticket.ticket_id,
         classification=classification,
@@ -191,7 +196,14 @@ async def tickets_analyze_batch_json(
     settings = get_settings()
     effective_model = _resolve_model_or_400(model, settings)
     provider = _provider_for_request(settings, effective_model, demo_mode)
-    result = await analyze_batch(provider, payload.tickets, limit=settings.batch_size_limit, model=effective_model)
+    allow_mock_fallback = demo_mode is not False
+    result = await analyze_batch(
+        provider,
+        payload.tickets,
+        limit=settings.batch_size_limit,
+        model=effective_model,
+        allow_mock_fallback=allow_mock_fallback,
+    )
     set_last_batch_result(result)
     return result
 
@@ -214,7 +226,14 @@ async def tickets_analyze_batch_upload(
     settings = get_settings()
     effective_model = _resolve_model_or_400(model, settings)
     provider = _provider_for_request(settings, effective_model, demo_mode)
-    result = await analyze_batch(provider, tickets, limit=settings.batch_size_limit, model=effective_model)
+    allow_mock_fallback = demo_mode is not False
+    result = await analyze_batch(
+        provider,
+        tickets,
+        limit=settings.batch_size_limit,
+        model=effective_model,
+        allow_mock_fallback=allow_mock_fallback,
+    )
     set_last_batch_result(result)
     return result
 
