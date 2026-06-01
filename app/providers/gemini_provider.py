@@ -40,12 +40,12 @@ def _extract_json(text: str) -> dict:
     return json.loads(cleaned)
 
 
-def _raise_if_api_error(exc: genai_errors.ClientError) -> None:
+def _raise_if_api_error(exc: genai_errors.ClientError, *, model: str) -> None:
     code = exc.code
     if code in (401, 403, 429):
         short = "quota exceeded" if code == 429 else "authentication failed"
         raise ProviderUnavailableError(
-            f"Gemini API unavailable ({code} {short}). "
+            f"Gemini API unavailable for model '{model}' ({code} {short}). "
             "Set DEMO_MODE=true or wait for quota reset.",
             status_code=503,
         ) from exc
@@ -69,7 +69,7 @@ class GeminiProvider:
                 },
             )
         except genai_errors.ClientError as exc:
-            _raise_if_api_error(exc)
+            _raise_if_api_error(exc, model=self.model_name)
             raise
         return _extract_json(response.text or "{}")
 
@@ -110,6 +110,6 @@ class GeminiProvider:
         except ProviderUnavailableError as exc:
             return False, str(exc)
         except genai_errors.ClientError as exc:
-            return False, f"Gemini API error ({exc.code} {exc.status})."
+            return False, f"Gemini API error for model '{self.model_name}' ({exc.code} {exc.status})."
         except (genai_errors.APIError, RuntimeError, json.JSONDecodeError, ValueError) as exc:
             return False, f"Provider ping failed: {exc}"

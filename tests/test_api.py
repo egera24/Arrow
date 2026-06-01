@@ -39,7 +39,7 @@ async def test_health_shows_specific_ping_failure():
     gemini_provider = AsyncMock()
     gemini_provider.name = "gemini"
     gemini_provider.ping = AsyncMock(
-        return_value=(False, "Gemini API unavailable (429 quota exceeded). Set DEMO_MODE=true or wait for quota reset.")
+        return_value=(False, "Gemini API unavailable for model 'gemini-2.0-flash' (429 quota exceeded). Set DEMO_MODE=true or wait for quota reset.")
     )
     with patch("app.main.get_settings") as mock_settings, patch("app.main.get_provider", return_value=gemini_provider):
         mock_settings.return_value.demo_mode = False
