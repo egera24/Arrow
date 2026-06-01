@@ -67,6 +67,24 @@ Open **http://localhost:8000/docs** for interactive API documentation.
 
 Set `DEMO_MODE=true` in `.env` to use keyword-based mock responses (useful for offline testing).
 
+You can also toggle demo mode **per request** with the `demo_mode` query parameter on `/health`, `/tickets/classify`, and batch endpoints. Leave it empty to use the `DEMO_MODE` env default.
+
+```powershell
+$BASE_URL = "http://localhost:8000"  # or https://your-service.onrender.com
+
+# Mock for this request only (even if DEMO_MODE=false)
+curl "$BASE_URL/tickets/classify?demo_mode=true" `
+  -H "Content-Type: application/json" `
+  -d "{\"ticket_id\":\"TKT-1001\",\"subject\":\"Cannot log in\",\"description\":\"Login failed.\"}"
+
+# Live Gemini for this request only (even if DEMO_MODE=true; requires AI_API_KEY)
+curl "$BASE_URL/tickets/classify?demo_mode=false" `
+  -H "Content-Type: application/json" `
+  -d "{\"ticket_id\":\"TKT-1001\",\"subject\":\"Cannot log in\",\"description\":\"Login failed.\"}"
+```
+
+Requesting `?demo_mode=false` without a configured API key returns HTTP 503.
+
 ### 5. Choose a Gemini model
 
 Free-tier quotas are **per model**. If `gemini-2.0-flash` hits rate limits, switch models:
@@ -147,7 +165,7 @@ Open http://localhost:8000/docs
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/models` | List supported Gemini models and default |
-| GET | `/health` | Readiness check (optional `?model=` to ping a specific model) |
+| GET | `/health` | Readiness check (optional `?model=` and `?demo_mode=`) |
 | POST | `/tickets/classify` | Classify a single ticket |
 | POST | `/tickets/analyze-batch` | Analyze a JSON array of tickets |
 | POST | `/tickets/analyze-batch/upload` | Upload CSV file for batch analysis |
@@ -233,7 +251,7 @@ app/
 data/
   sample_tickets.csv   # Demo dataset
 tests/
-  test_api.py          # API tests (demo mode)
+  test_api.py          # API tests (demo mode; no live Gemini)
 Dockerfile             # Production container (Render)
 render.yaml            # Render Blueprint
 .github/workflows/ci.yml

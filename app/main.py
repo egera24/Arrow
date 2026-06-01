@@ -16,7 +16,7 @@ from app.models import (
 )
 from app.providers.base import LLMProvider
 from app.providers.errors import ProviderUnavailableError
-from app.providers.factory import get_provider
+from app.providers.factory import get_provider, resolve_demo_mode
 from app.services.batch_analyzer import analyze_batch
 from app.services.classifier import classify_ticket
 from app.state import batch_result_to_csv, get_last_batch_result, parse_tickets_csv, set_last_batch_result
@@ -34,6 +34,10 @@ MODEL_QUERY = Query(
     default=None,
     description="Optional Gemini model override. Leave empty to use AI_MODEL from .env.",
 )
+DEMO_MODE_QUERY = Query(
+    default=None,
+    description="Optional override: true = mock/heuristic responses; false = live Gemini. Defaults to DEMO_MODE from .env.",
+)
 
 
 @app.get("/", include_in_schema=False)
@@ -48,8 +52,12 @@ def _resolve_model_or_400(requested: str | GeminiModel | None, settings: Setting
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-def _provider_for_request(settings: Settings, model: str) -> LLMProvider:
-    return get_provider(settings, model=model)
+def _provider_for_request(
+    settings: Settings,
+    model: str,
+    demo_mode: bool | None = None,
+) -> LLMProvider:
+    return get_provider(settings, model=model, demo_mode=demo_mode)
 
 
 @app.exception_handler(RequestValidationError)
@@ -62,7 +70,7 @@ async def validation_exception_handler(_request: Request, exc: RequestValidation
                 "Remove created_at or use an ISO datetime like 2026-05-28T09:15:00."
             )
         if error.get("loc") == ("body", "demo_mode"):
-            error["hint"] = "demo_mode is a response field only. Set DEMO_MODE in .env, not in the request body."
+            error["hint"] = "Use the demo_mode query parameter instead of sending demo_mode in the request body."
         if error.get("loc") == ("query", "model") and error.get("input") == "string":
             error["hint"] = "Clear the model field or pick a value from the dropdown. Do not leave the placeholder 'string'."
     return JSONResponse(status_code=422, content={"detail": detail})
@@ -92,18 +100,22 @@ async def health_live() -> dict[str, str]:
 @app.get("/health", response_model=HealthResponse)
 async def health(
     model: GeminiModel | None = MODEL_QUERY,
+    demo_mode: bool | None = DEMO_MODE_QUERY,
 ) -> HealthResponse:
     settings = get_settings()
     effective_model = _resolve_model_or_400(model, settings)
-    provider = _provider_for_request(settings, effective_model)
+    effective_demo_mode = resolve_demo_mode(demo_mode, settings)
+    provider = _provider_for_request(settings, effective_model, demo_mode)
     api_key_configured = bool(settings.ai_api_key) and settings.ai_api_key != "your_gemini_api_key_here"
 
     reachable: bool | None = None
     message: str | None = None
     status: str = "ok"
 
-    if settings.demo_mode or not api_key_configured:
-        message = "Running in demo mode or without API key."
+    if effective_demo_mode:
+        message = "Running in demo mode."
+    elif not api_key_configured:
+        message = "API key not configured; live mode unavailable."
     else:
         try:
             reachable, ping_detail = await provider.ping()
@@ -119,7 +131,7 @@ async def health(
         status=status,
         provider=provider.name,
         api_key_configured=api_key_configured,
-        demo_mode=settings.demo_mode or provider.name == "mock",
+        demo_mode=effective_demo_mode or provider.name == "mock",
         model=effective_model,
         provider_reachable=reachable,
         message=message,
@@ -137,10 +149,11 @@ async def tickets_classify(
         }
     ),
     model: GeminiModel | None = MODEL_QUERY,
+    demo_mode: bool | None = DEMO_MODE_QUERY,
 ) -> ClassifyResponse:
     settings = get_settings()
     effective_model = _resolve_model_or_400(model, settings)
-    provider = _provider_for_request(settings, effective_model)
+    provider = _provider_for_request(settings, effective_model, demo_mode)
     classification, provider_used = await classify_ticket(provider, ticket)
     return ClassifyResponse(
         ticket_id=ticket.ticket_id,
@@ -171,12 +184,13 @@ async def tickets_analyze_batch_json(
         }
     ),
     model: GeminiModel | None = MODEL_QUERY,
+    demo_mode: bool | None = DEMO_MODE_QUERY,
 ) -> BatchAnalyzeResponse:
     if not payload.tickets:
         raise HTTPException(status_code=400, detail="At least one ticket is required.")
     settings = get_settings()
     effective_model = _resolve_model_or_400(model, settings)
-    provider = _provider_for_request(settings, effective_model)
+    provider = _provider_for_request(settings, effective_model, demo_mode)
     result = await analyze_batch(provider, payload.tickets, limit=settings.batch_size_limit, model=effective_model)
     set_last_batch_result(result)
     return result
@@ -186,6 +200,7 @@ async def tickets_analyze_batch_json(
 async def tickets_analyze_batch_upload(
     file: UploadFile = File(...),
     model: GeminiModel | None = MODEL_QUERY,
+    demo_mode: bool | None = DEMO_MODE_QUERY,
 ) -> BatchAnalyzeResponse:
     if not file.filename or not file.filename.lower().endswith(".csv"):
         raise HTTPException(status_code=400, detail="Upload a CSV file with columns: ticket_id, subject, description, created_at")
@@ -198,7 +213,7 @@ async def tickets_analyze_batch_upload(
         raise HTTPException(status_code=400, detail="CSV contains no ticket rows.")
     settings = get_settings()
     effective_model = _resolve_model_or_400(model, settings)
-    provider = _provider_for_request(settings, effective_model)
+    provider = _provider_for_request(settings, effective_model, demo_mode)
     result = await analyze_batch(provider, tickets, limit=settings.batch_size_limit, model=effective_model)
     set_last_batch_result(result)
     return result

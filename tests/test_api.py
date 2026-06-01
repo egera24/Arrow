@@ -110,7 +110,7 @@ async def test_classify_passes_model_override_to_provider():
                 )
     assert response.status_code == 200
     assert response.json()["model"] == "gemini-2.5-flash-lite"
-    mock_get_provider.assert_called_once_with(mock_settings.return_value, model="gemini-2.5-flash-lite")
+    mock_get_provider.assert_called_once_with(mock_settings.return_value, model="gemini-2.5-flash-lite", demo_mode=None)
 
 
 @pytest.mark.asyncio
@@ -143,6 +143,77 @@ async def test_classify_ignores_swagger_created_at_placeholder():
             },
         )
     assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_classify_demo_mode_query_forces_mock():
+    with patch("app.main.get_settings") as mock_settings:
+        mock_settings.return_value.demo_mode = False
+        mock_settings.return_value.ai_api_key = "test-key"
+        mock_settings.return_value.ai_model = "gemini-2.0-flash"
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/tickets/classify?demo_mode=true",
+                json={
+                    "ticket_id": "TKT-DEMO-QUERY",
+                    "subject": "Cannot log in",
+                    "description": "User cannot access account after password reset.",
+                },
+            )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["provider"] == "mock"
+    assert payload["demo_mode"] is True
+
+
+@pytest.mark.asyncio
+async def test_classify_demo_mode_query_forces_live():
+    from app.models import TicketClassification
+
+    gemini_provider = AsyncMock()
+    gemini_provider.name = "gemini"
+    gemini_provider.classify_ticket = AsyncMock(
+        return_value=TicketClassification(
+            ticket_id="TKT-LIVE-QUERY",
+            category="account",
+            priority="medium",
+            sentiment="neutral",
+            summary="Login issue",
+            suggested_tags=["account"],
+            rationale="Gemini classification",
+        )
+    )
+    with patch("app.main.get_provider", return_value=gemini_provider) as mock_get_provider:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/tickets/classify?demo_mode=false",
+                json={
+                    "ticket_id": "TKT-LIVE-QUERY",
+                    "subject": "Cannot log in",
+                    "description": "User cannot access account.",
+                },
+            )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["provider"] == "gemini"
+    assert payload["demo_mode"] is False
+    mock_get_provider.assert_called_once()
+    assert mock_get_provider.call_args.kwargs["demo_mode"] is False
+
+
+@pytest.mark.asyncio
+async def test_classify_live_mode_without_api_key_returns_503():
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            "/tickets/classify?demo_mode=false",
+            json={
+                "ticket_id": "TKT-NO-KEY",
+                "subject": "Cannot log in",
+                "description": "User cannot access account.",
+            },
+        )
+    assert response.status_code == 503
+    assert "AI_API_KEY" in response.json()["detail"]
 
 
 @pytest.mark.asyncio

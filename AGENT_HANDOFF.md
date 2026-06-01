@@ -17,9 +17,10 @@
 
 Classifies support tickets and generates batch trend insights. Designed for live Swagger demos and maps to: ticket enrichment → batch ETL → CSV export → Power BI.
 
-- **Gemini path** — real AI when `DEMO_MODE=false` and API key is set
-- **Mock path** — keyword heuristics when `DEMO_MODE=true`, no key, or auto-fallback triggers
+- **Gemini path** — real AI when effective demo mode is false and API key is set
+- **Mock path** — keyword heuristics when effective demo mode is true, no key, or auto-fallback triggers
 - **Model selection** — default via `.env` / Render env vars, per-request override via `?model=` query param
+- **Demo mode selection** — default via `DEMO_MODE` env var, per-request override via `?demo_mode=` query param (true = mock, false = live Gemini)
 - **Supported models** — hardcoded in `app/model_selection.py` (`GET /models` does not call Google API)
 
 User-facing docs: `README.md`. Demo script and checklist are there too.
@@ -124,13 +125,13 @@ HTTP (Swagger / curl)
 | GET | `/` | Redirects to `/docs` (hidden from OpenAPI) |
 | GET | `/models` | Supported Gemini models + default from env (hardcoded list) |
 | GET | `/health/live` | Fast liveness probe for Render; no Gemini call (hidden from OpenAPI) |
-| GET | `/health` | Status, provider, Gemini ping; optional `?model=` |
-| POST | `/tickets/classify` | Single ticket; optional `?model=` |
-| POST | `/tickets/analyze-batch` | JSON `{ "tickets": [...] }`; optional `?model=` |
-| POST | `/tickets/analyze-batch/upload` | CSV upload; optional `?model=` |
+| GET | `/health` | Status, provider, Gemini ping; optional `?model=` and `?demo_mode=` |
+| POST | `/tickets/classify` | Single ticket; optional `?model=` and `?demo_mode=` |
+| POST | `/tickets/analyze-batch` | JSON `{ "tickets": [...] }`; optional `?model=` and `?demo_mode=` |
+| POST | `/tickets/analyze-batch/upload` | CSV upload; optional `?model=` and `?demo_mode=` |
 | GET | `/tickets/export` | CSV of last batch (404 if none yet) |
 
-Responses include `model` (requested/effective) and `demo_mode` (true when mock was used).
+Responses include `model` (requested/effective) and `demo_mode` (true when mock was used). Set `?demo_mode=true|false` on classify/batch/health to override `DEMO_MODE` for that request; omit to use the env default. `?demo_mode=false` without `AI_API_KEY` returns HTTP 503.
 
 ---
 
@@ -140,7 +141,7 @@ Responses include `model` (requested/effective) and `demo_mode` (true when mock 
 AI_PROVIDER=gemini
 AI_API_KEY=your_gemini_api_key_here    # from Google AI Studio (AIzaSy...)
 AI_MODEL=gemini-2.0-flash-lite       # default model; see GET /models
-DEMO_MODE=false                      # true = always mock, no Gemini calls
+DEMO_MODE=false                      # default mock/live; ?demo_mode= overrides per request
 AUTO_FALLBACK_TO_MOCK=true           # false = return HTTP 503 on Gemini quota/auth errors
 BATCH_SIZE_LIMIT=10
 ```
@@ -205,7 +206,7 @@ Stop stale uvicorn processes or use `--port 8001`.
 
 ### Request validation 422 (real errors)
 
-Still possible for invalid JSON bodies. Validation handler adds hints for common Swagger mistakes (`created_at: "string"`, `demo_mode` in body). `created_at: "string"` is also coerced to `null` server-side.
+Still possible for invalid JSON bodies. Validation handler adds hints for common Swagger mistakes (`created_at: "string"`, `demo_mode` in body — use query param instead). `created_at: "string"` is also coerced to `null` server-side.
 
 ---
 
@@ -215,7 +216,7 @@ Still possible for invalid JSON bodies. Validation handler adds hints for common
 .\.venv\Scripts\pytest -q
 ```
 
-13 tests in `tests/test_api.py`. Tests set `DEMO_MODE=true` and empty `AI_API_KEY` before importing the app — they never call live Gemini.
+16 tests in `tests/test_api.py`. Tests set `DEMO_MODE=true` and empty `AI_API_KEY` before importing the app — they never call live Gemini.
 
 Covers: health live, health, model list, classify, batch, CSV upload, export, mock fallback, OpenAPI 422 hidden, model override.
 
