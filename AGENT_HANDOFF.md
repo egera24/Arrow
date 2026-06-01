@@ -18,9 +18,10 @@
 Classifies support tickets and generates batch trend insights. Designed for live Swagger demos and maps to: ticket enrichment → batch ETL → CSV export → Power BI.
 
 - **Gemini path** — real AI when effective demo mode is false and API key is set
-- **Mock path** — keyword heuristics when effective demo mode is true, no key, or auto-fallback triggers
+- **Mock path** — keyword heuristics when effective demo mode is true, no API key, or auto-fallback (see below)
 - **Model selection** — default via `.env` / Render env vars, per-request override via `?model=` query param
-- **Demo mode selection** — default via `DEMO_MODE` env var, per-request override via `?demo_mode=` query param (true = mock, false = live Gemini)
+- **Demo mode selection** — default via `DEMO_MODE` env var, per-request override via `?demo_mode=` query param (`true` = mock, `false` = live Gemini)
+- **Explicit live mode** — `?demo_mode=false` disables silent mock fallback; Gemini failures return HTTP 503 with the model name in the error
 - **Supported models** — hardcoded in `app/model_selection.py` (`GET /models` does not call Google API)
 
 User-facing docs: `README.md`. Demo script and checklist are there too.
@@ -86,8 +87,9 @@ Local dev unchanged: `.\run.ps1` with `--reload`.
 HTTP (Swagger / curl)
   → app/main.py              routes, validation hints, custom OpenAPI
   → app/model_selection.py   GeminiModel enum, resolve_model()
-  → app/services/            classify_ticket (with fallback), analyze_batch
-  → app/providers/factory.py → GeminiProvider | MockProvider
+  → app/providers/factory.py resolve_demo_mode(), get_provider(model, demo_mode)
+  → app/services/            classify_ticket (allow_mock_fallback), analyze_batch
+  → GeminiProvider | MockProvider
   → google-genai API         OR keyword heuristics
   → Pydantic response models
   → app/state.py             in-memory last batch + CSV export
@@ -101,12 +103,12 @@ HTTP (Swagger / curl)
 | `app/models.py` | Pydantic schemas; `TICKET_EXAMPLE`; `created_at` hidden from OpenAPI via `SkipJsonSchema` |
 | `app/model_selection.py` | `GeminiModel` enum, `SUPPORTED_GEMINI_MODELS`, `resolve_model()` |
 | `app/config.py` | Settings from env vars + optional `.env` (`get_settings()` is `@lru_cache`) |
-| `app/providers/factory.py` | Provider selection; accepts optional `model` override |
-| `app/providers/gemini_provider.py` | Gemini JSON-mode calls; `ping()` returns `(reachable, detail)` |
+| `app/providers/factory.py` | `resolve_demo_mode()`, provider selection; optional `model` and `demo_mode` overrides |
+| `app/providers/gemini_provider.py` | Gemini JSON-mode calls; `ping()` returns `(reachable, detail)`; 503 errors include model name |
 | `app/providers/errors.py` | `ProviderUnavailableError` for 401/403/429 |
 | `app/providers/mock_provider.py` | Keyword-based demo classifications |
-| `app/services/classifier.py` | Classify with auto-fallback to mock on provider errors |
-| `app/services/batch_analyzer.py` | Batch loop + trend analysis + fallback trends |
+| `app/services/classifier.py` | Classify; optional mock fallback when `allow_mock_fallback=True` |
+| `app/services/batch_analyzer.py` | Batch loop + trend analysis; respects `allow_mock_fallback` |
 | `app/state.py` | CSV parse/upload, last batch storage, export |
 | `data/sample_tickets.csv` | 20 demo tickets for batch upload demo |
 | `.env` | Secrets — **never commit** (in `.gitignore`) |
@@ -116,7 +118,7 @@ HTTP (Swagger / curl)
 | `.dockerignore` | Excludes `.venv`, `.env`, tests from image |
 | `render.yaml` | Render Blueprint (free web service, `healthCheckPath: /health/live`) |
 | `.github/workflows/ci.yml` | pytest on push/PR |
-| `tests/test_api.py` | 13 API tests (demo mode; no live Gemini) |
+| `tests/test_api.py` | 17 API tests (demo mode; no live Gemini) |
 
 ### Endpoints
 
@@ -131,7 +133,19 @@ HTTP (Swagger / curl)
 | POST | `/tickets/analyze-batch/upload` | CSV upload; optional `?model=` and `?demo_mode=` |
 | GET | `/tickets/export` | CSV of last batch (404 if none yet) |
 
-Responses include `model` (requested/effective) and `demo_mode` (true when mock was used). Set `?demo_mode=true|false` on classify/batch/health to override `DEMO_MODE` for that request; omit to use the env default. `?demo_mode=false` without `AI_API_KEY` returns HTTP 503.
+Responses include `model` (requested/effective) and `demo_mode` (true when mock was used).
+
+**Query param `demo_mode` (tri-state):**
+
+| Query | Env `DEMO_MODE` | API key | Result |
+|-------|-----------------|---------|--------|
+| *(omit)* | `false` | set | Live Gemini (fallback to mock on 429 if `AUTO_FALLBACK_TO_MOCK=true`) |
+| `?demo_mode=true` | `false` | set | Mock for this request |
+| `?demo_mode=false` | `true` | set | Live Gemini; **no** silent fallback — 503 on Gemini failure |
+| `?demo_mode=false` | any | missing | HTTP 503 (`Live mode requires AI_API_KEY...`) |
+| *(omit)* | `true` | set | Mock (env default) |
+
+Leave `model` blank to use `AI_MODEL` from env. Do not send `demo_mode` in the request body — use the query param.
 
 ---
 
@@ -168,6 +182,19 @@ Swagger shows `model` as a **dropdown** (enum), not free text.
 
 ---
 
+## Demo mode selection
+
+| How | Example |
+|-----|---------|
+| Default | `DEMO_MODE=false` in `.env` or Render env |
+| Mock this request | `POST /tickets/classify?demo_mode=true` |
+| Live this request | `POST /tickets/classify?demo_mode=false` |
+| Omit param | Uses env default; auto-fallback applies unless live was explicitly requested |
+
+Use `?demo_mode=true` for offline interviews or when quota is exhausted. Use `?demo_mode=false` when you need a real Gemini response and want a clear 503 instead of silent mock data.
+
+---
+
 ## Troubleshooting
 
 ### Swagger shows `TypeError: NetworkError when attempting to fetch resource`
@@ -182,11 +209,14 @@ Swagger shows `model` as a **dropdown** (enum), not free text.
 
 ### `/health` shows `degraded` with quota message
 
-**Expected when Gemini free tier is exhausted.** `/health` pings Gemini and surfaces the specific error (e.g. `429 quota exceeded`).
+**Expected when Gemini free tier is exhausted.** `/health` pings Gemini and surfaces the specific error, including the model name (e.g. `Gemini API unavailable for model 'gemini-2.0-flash' (429 quota exceeded)`).
 
-**Options:** switch model (see above), set `DEMO_MODE=true`, wait for quota reset, or use a new AI Studio key.
+**Options:** switch model (see above), use `?demo_mode=true`, wait for quota reset, or use a new AI Studio key.
 
-Classify/batch may still return **200** via mock fallback when `AUTO_FALLBACK_TO_MOCK=true` (default).
+**Fallback behavior:**
+
+- `?demo_mode` omitted + `AUTO_FALLBACK_TO_MOCK=true` (default) → classify/batch may return **200** with mock data on 429
+- `?demo_mode=false` explicitly → **503** with Gemini error (no silent mock); error includes the model that was attempted
 
 ### Render cold start
 
@@ -216,9 +246,9 @@ Still possible for invalid JSON bodies. Validation handler adds hints for common
 .\.venv\Scripts\pytest -q
 ```
 
-16 tests in `tests/test_api.py`. Tests set `DEMO_MODE=true` and empty `AI_API_KEY` before importing the app — they never call live Gemini.
+17 tests in `tests/test_api.py`. Tests set `DEMO_MODE=true` and empty `AI_API_KEY` before importing the app — they never call live Gemini.
 
-Covers: health live, health, model list, classify, batch, CSV upload, export, mock fallback, OpenAPI 422 hidden, model override.
+Covers: health live, health, model list, classify, batch, CSV upload, export, mock fallback, explicit `?demo_mode=false` no-fallback (503), per-request demo override, OpenAPI 422 hidden, model override.
 
 ---
 
@@ -240,7 +270,8 @@ To publish updates: `git push origin main` → Render auto-rebuilds.
 - Local fallback: http://localhost:8000/docs via `.\run.ps1`
 - Batch demo file: `data/sample_tickets.csv`
 - Export path: `GET /tickets/export` → Power BI
-- Prefer `DEMO_MODE=false` for live AI portion if quota allows; fall back to mock gracefully
+- Prefer `DEMO_MODE=false` (or `?demo_mode=false`) for live AI if quota allows; use `?demo_mode=true` when quota is hit
+- If live call fails with 429, error shows which model was used — try `?model=gemini-2.5-flash-lite` or another supported ID
 - Wake Render instance with `/health/live` before live demo if service was idle
 - Disable ad blocker for Render domain before Swagger demo
 - ~5 min demo script in `README.md`
